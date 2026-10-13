@@ -12,3 +12,25 @@ export const HIDE_CHARTDB_CLOUD: boolean =
 export const DISABLE_ANALYTICS: boolean =
     (window?.env?.DISABLE_ANALYTICS ??
         import.meta.env.VITE_DISABLE_ANALYTICS) === 'true';
+
+const getEnv = (key: string): string | undefined =>
+    window?.env?.[key] ?? import.meta.env[`VITE_${key}`];
+
+export const SYNC_ENABLED: boolean = getEnv('SYNC_ENABLED') === 'true';
+export const SYNC_AUTO_SAVE: boolean = getEnv('SYNC_AUTO_SAVE') === 'true';
+export const BITBUCKET_API_BASE: string =
+    getEnv('BITBUCKET_API_BASE') ?? 'https://api.bitbucket.org/2.0';
+export const BITBUCKET_WORKSPACE: string = getEnv('BITBUCKET_WORKSPACE') ?? '';
+export const BITBUCKET_REPO: string = getEnv('BITBUCKET_REPO') ?? '';
+export const BITBUCKET_GIT_URL: string = getEnv('BITBUCKET_GIT_URL') ?? '';
+export const BITBUCKET_BRANCH: string = getEnv('BITBUCKET_BRANCH') ?? 'main';
+export const BITBUCKET_FILE_PATH: string =
+    getEnv('BITBUCKET_FILE_PATH') ?? 'erd.json';
+export const BITBUCKET_USERNAME: string = getEnv('BITBUCKET_USERNAME') ?? '';
+export const BITBUCKET_APP_PASSWORD: string =
+    getEnv('BITBUCKET_APP_PASSWORD') ?? '';
+export const BITBUCKET_API_TOKEN: string = getEnv('BITBUCKET_API_TOKEN') ?? '';
+export const SYNC_POLL_INTERVAL_MS: number =
+    Number(getEnv('SYNC_POLL_INTERVAL_MS')) || 15000;
+export const SYNC_GIT_CORS_PROXY: string =
+    getEnv('SYNC_GIT_CORS_PROXY') ?? '/git';

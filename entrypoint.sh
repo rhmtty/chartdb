@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # Replace placeholders in nginx.conf
-envsubst '${OPENAI_API_KEY} ${OPENAI_API_ENDPOINT} ${LLM_MODEL_NAME} ${HIDE_CHARTDB_CLOUD} ${DISABLE_ANALYTICS}' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf
+envsubst '${OPENAI_API_KEY} ${OPENAI_API_ENDPOINT} ${LLM_MODEL_NAME} ${HIDE_CHARTDB_CLOUD} ${DISABLE_ANALYTICS} ${SYNC_ENABLED} ${SYNC_AUTO_SAVE} ${BITBUCKET_API_BASE} ${BITBUCKET_WORKSPACE} ${BITBUCKET_REPO} ${BITBUCKET_GIT_URL} ${BITBUCKET_BRANCH} ${BITBUCKET_FILE_PATH} ${BITBUCKET_USERNAME} ${BITBUCKET_APP_PASSWORD} ${BITBUCKET_API_TOKEN} ${SYNC_POLL_INTERVAL_MS} ${SYNC_GIT_CORS_PROXY}' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf
 
 # Start Nginx
 nginx -g "daemon off;"

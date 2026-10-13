@@ -3,6 +3,13 @@
  * Safari 15.3 and earlier don't support these modern JavaScript features
  */
 
+// Polyfill for Buffer (needed by isomorphic-git/lightning-fs in the browser;
+// without it, git sync throws "Buffer is not defined" / "Missing Buffer dependency")
+import { Buffer } from 'buffer';
+if (typeof globalThis.Buffer === 'undefined') {
+    globalThis.Buffer = Buffer;
+}
+
 // Polyfill for structuredClone (Safari < 15.4)
 if (typeof globalThis.structuredClone === 'undefined') {
     globalThis.structuredClone = <T>(obj: T): T => {

@@ -8,6 +8,34 @@ server {
 	    try_files  $uri $uri/ /index.html;
     }
 
+    # Git smart-HTTP proxy for the sync feature. Bitbucket's git endpoints do
+    # not send CORS headers, so isomorphic-git routes requests through the
+    # same-origin /git/<host>/... path and nginx relays them to the remote.
+    location ~ ^/git/([^/]+)(/.*)?$ {
+        resolver 127.0.0.11 8.8.8.8 valid=300s ipv6=off;
+        set $git_host $1;
+        set $git_path $2;
+        proxy_pass https://$git_host$git_path$is_args$args;
+        proxy_http_version 1.1;
+        proxy_set_header Host $git_host;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header Content-Type $http_content_type;
+        # Never forward the Basic-auth challenge: the browser shows a native
+        # username/password dialog on it, while isomorphic-git authenticates
+        # via the URL credentials.
+        proxy_hide_header WWW-Authenticate;
+        proxy_buffering off;
+        proxy_ssl_server_name on;
+        proxy_ssl_name $git_host;
+        client_max_body_size 50m;
+        add_header Access-Control-Allow-Origin * always;
+        add_header Access-Control-Allow-Headers "authorization, content-type, user-agent" always;
+        add_header Access-Control-Allow-Methods "GET, POST, OPTIONS" always;
+        if ($request_method = OPTIONS) {
+            return 204;
+        }
+    }
+
     location /config.js {
         default_type application/javascript;
         return 200 "window.env = {
@@ -15,7 +43,20 @@ server {
             OPENAI_API_ENDPOINT: \"$OPENAI_API_ENDPOINT\",
             LLM_MODEL_NAME: \"$LLM_MODEL_NAME\",
             HIDE_CHARTDB_CLOUD: \"$HIDE_CHARTDB_CLOUD\",
-            DISABLE_ANALYTICS: \"$DISABLE_ANALYTICS\"
+            DISABLE_ANALYTICS: \"$DISABLE_ANALYTICS\",
+            SYNC_ENABLED: \"$SYNC_ENABLED\",
+            SYNC_AUTO_SAVE: \"$SYNC_AUTO_SAVE\",
+            BITBUCKET_API_BASE: \"$BITBUCKET_API_BASE\",
+            BITBUCKET_WORKSPACE: \"$BITBUCKET_WORKSPACE\",
+            BITBUCKET_REPO: \"$BITBUCKET_REPO\",
+            BITBUCKET_GIT_URL: \"$BITBUCKET_GIT_URL\",
+            BITBUCKET_BRANCH: \"$BITBUCKET_BRANCH\",
+            BITBUCKET_FILE_PATH: \"$BITBUCKET_FILE_PATH\",
+            BITBUCKET_USERNAME: \"$BITBUCKET_USERNAME\",
+            BITBUCKET_APP_PASSWORD: \"$BITBUCKET_APP_PASSWORD\",
+            BITBUCKET_API_TOKEN: \"$BITBUCKET_API_TOKEN\",
+            SYNC_POLL_INTERVAL_MS: \"$SYNC_POLL_INTERVAL_MS\",
+            SYNC_GIT_CORS_PROXY: \"$SYNC_GIT_CORS_PROXY\"
         };";
     }
 
