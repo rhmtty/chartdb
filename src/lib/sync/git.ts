@@ -78,33 +78,30 @@ const mkdirp = async (fs: GitWriterFs, absolutePath: string): Promise<void> => {
 };
 
 /**
- * Errors that mean "the remote is reachable but refused or could not serve
- * us" - as opposed to "the remote repo is simply empty". Cloning an empty
- * Bitbucket repo legitimately fails, and we recover from that by initializing
- * a local repo. Transport, HTTP and auth failures must NOT be recovered from:
- * swallowing them produces a local repo with no history, and the user then
- * sees a confusing push rejection instead of "401" or "CORS blocked".
+ * The only clone failures worth recovering from locally. Everything else -
+ * HTTP status errors, a CORS block or dead proxy (a bare `TypeError: Failed to
+ * fetch` in the browser), DNS and connection failures (plain `Error`s carrying
+ * `ENOTFOUND`/`ECONNREFUSED`) - means the remote was never read. Recovering
+ * from those builds a local repo with no history and reports a confusing push
+ * rejection instead of the real cause, so they must propagate.
+ *
+ * Note: cloning an *empty* remote succeeds (it just leaves HEAD on the remote's
+ * default branch), so the empty-repo case does not reach this list. What does
+ * reach it is a repo whose configured branch does not exist yet.
  */
-const FATAL_CLONE_ERROR_CODES = new Set([
-    'HttpError',
-    'SmartHttpError',
-    'UserCanceledError',
-    'UnknownTransportError',
-    'UrlParseError',
+const RECOVERABLE_CLONE_ERROR_CODES = new Set([
+    'NotFoundError',
+    'NoRefspecError',
+    'RemoteCapabilityError',
+    'EmptyServerResponseError',
 ]);
 
 const describeError = (error: unknown): string =>
     error instanceof Error ? error.message : String(error);
 
-const isFatalCloneError = (error: unknown): boolean => {
+const isRecoverableCloneError = (error: unknown): boolean => {
     const code = (error as { code?: string } | undefined)?.code;
-    if (code && FATAL_CLONE_ERROR_CODES.has(code)) {
-        return true;
-    }
-    // A browser CORS block or a dead/misconfigured proxy surfaces as a plain
-    // TypeError ("Failed to fetch") from the underlying fetch call, with no
-    // isomorphic-git error code attached.
-    return error instanceof TypeError;
+    return code !== undefined && RECOVERABLE_CLONE_ERROR_CODES.has(code);
 };
 
 /**
@@ -171,7 +168,7 @@ export const createGitWriter = (
             });
             return;
         } catch (error) {
-            if (isFatalCloneError(error)) {
+            if (!isRecoverableCloneError(error)) {
                 throw new Error(
                     `Cannot reach the Bitbucket repository: ${describeError(error)}. ` +
                         'Check the credentials and that the git CORS proxy ' +
@@ -180,8 +177,8 @@ export const createGitWriter = (
                 );
             }
 
-            // Cloning an empty remote repo (no commits yet) fails. Initialize a
-            // local repo and wire the remote so the first push creates the branch.
+            // The configured branch does not exist on the remote yet. Initialize
+            // a local repo and wire the remote so the first push creates it.
             await git.init({ fs: fsImpl, dir, defaultBranch: options.branch });
             // `force` keeps origin pointed at the current credentials: the URL
             // embeds them, so a rotated app password changes the URL and a
