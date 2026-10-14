@@ -13,8 +13,21 @@ export const DISABLE_ANALYTICS: boolean =
     (window?.env?.DISABLE_ANALYTICS ??
         import.meta.env.VITE_DISABLE_ANALYTICS) === 'true';
 
-const getEnv = (key: string): string | undefined =>
-    window?.env?.[key] ?? import.meta.env[`VITE_${key}`];
+/**
+ * Reads a runtime (`window.env`, injected by nginx) or build-time (`VITE_*`)
+ * value. `envsubst` always emits every key in the nginx template, so an unset
+ * variable arrives as an empty string rather than `undefined` - treat those as
+ * absent so the defaults below actually apply in a deployed container.
+ */
+const getEnv = (key: string): string | undefined => {
+    const candidates = [window?.env?.[key], import.meta.env[`VITE_${key}`]];
+    for (const value of candidates) {
+        if (typeof value === 'string' && value.trim() !== '') {
+            return value.trim();
+        }
+    }
+    return undefined;
+};
 
 export const SYNC_ENABLED: boolean = getEnv('SYNC_ENABLED') === 'true';
 export const SYNC_AUTO_SAVE: boolean = getEnv('SYNC_AUTO_SAVE') === 'true';

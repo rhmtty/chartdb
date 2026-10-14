@@ -272,4 +272,56 @@ describe.skipIf(!GIT_AVAILABLE)('git writer', () => {
             })
         ).rejects.toThrow();
     });
+
+    it('reports an unreachable remote instead of silently starting a fresh history', async () => {
+        // A CORS block or dead proxy must not be mistaken for "empty repo":
+        // doing so builds a local repo with no history and reports a confusing
+        // push rejection rather than the real connectivity failure.
+        const unreachableDir = path.join(projectRoot, 'work-unreachable');
+        await nodeFs.mkdir(unreachableDir, { recursive: true });
+        const writer = createGitWriter({
+            ...makeOptions(),
+            // Port 1 is closed, so the transport fails rather than 404ing.
+            gitUrl: 'http://127.0.0.1:1/erds.git',
+            dir: unreachableDir,
+        });
+
+        await expect(
+            writer.putFile({
+                content: '{}',
+                message: '[ChartDB] unreachable',
+            })
+        ).rejects.toThrow(/Cannot reach the Bitbucket repository/);
+    });
+
+    it('decodes a percent-encoded email username for basic auth', async () => {
+        // `withGitCredentials` percent-encodes the username, so the writer must
+        // decode it before using it as the git author / auth username.
+        const emailDir = path.join(projectRoot, 'work-email');
+        await nodeFs.mkdir(emailDir, { recursive: true });
+        const encodedUrl = baseUrl.replace(
+            /^http:\/\//,
+            'http://analyst%40example.com:secret@'
+        );
+
+        const writer = createGitWriter({
+            gitUrl: encodedUrl,
+            branch: 'main',
+            filePath: 'diagrams/erd-email.json',
+            username: 'analyst@example.com',
+            appPassword: 'secret',
+            fs: nodeFs as unknown as GitWriterOptions['fs'],
+            dir: emailDir,
+            httpClient: http,
+        });
+
+        const oid = await writer.putFile({
+            content: '{"diagram":"email"}',
+            message: '[ChartDB] sync email author',
+        });
+
+        const commits = await remoteLog();
+        const pushed = commits.find((entry) => entry.oid === oid);
+        expect(pushed?.commit.author.name).toBe('analyst@example.com');
+    });
 });

@@ -43,7 +43,16 @@ const extractGitUsername = (gitUrl: string): string | null => {
     }
     const userinfo = match[1];
     const separatorIndex = userinfo.indexOf(':');
-    return separatorIndex >= 0 ? userinfo.slice(0, separatorIndex) : userinfo;
+    const username =
+        separatorIndex >= 0 ? userinfo.slice(0, separatorIndex) : userinfo;
+    // `withGitCredentials` percent-encodes the username when embedding it, so an
+    // email login arrives here as `user%40example.com`. The Basic auth header
+    // needs the literal value, not the encoded one.
+    try {
+        return decodeURIComponent(username);
+    } catch {
+        return username;
+    }
 };
 
 const mkdirp = async (fs: GitWriterFs, absolutePath: string): Promise<void> => {
@@ -66,6 +75,36 @@ const mkdirp = async (fs: GitWriterFs, absolutePath: string): Promise<void> => {
             throw error;
         }
     }
+};
+
+/**
+ * Errors that mean "the remote is reachable but refused or could not serve
+ * us" - as opposed to "the remote repo is simply empty". Cloning an empty
+ * Bitbucket repo legitimately fails, and we recover from that by initializing
+ * a local repo. Transport, HTTP and auth failures must NOT be recovered from:
+ * swallowing them produces a local repo with no history, and the user then
+ * sees a confusing push rejection instead of "401" or "CORS blocked".
+ */
+const FATAL_CLONE_ERROR_CODES = new Set([
+    'HttpError',
+    'SmartHttpError',
+    'UserCanceledError',
+    'UnknownTransportError',
+    'UrlParseError',
+]);
+
+const describeError = (error: unknown): string =>
+    error instanceof Error ? error.message : String(error);
+
+const isFatalCloneError = (error: unknown): boolean => {
+    const code = (error as { code?: string } | undefined)?.code;
+    if (code && FATAL_CLONE_ERROR_CODES.has(code)) {
+        return true;
+    }
+    // A browser CORS block or a dead/misconfigured proxy surfaces as a plain
+    // TypeError ("Failed to fetch") from the underlying fetch call, with no
+    // isomorphic-git error code attached.
+    return error instanceof TypeError;
 };
 
 /**
@@ -130,15 +169,29 @@ export const createGitWriter = (
                 depth: 1,
                 onAuth: auth,
             });
-        } catch {
+            return;
+        } catch (error) {
+            if (isFatalCloneError(error)) {
+                throw new Error(
+                    `Cannot reach the Bitbucket repository: ${describeError(error)}. ` +
+                        'Check the credentials and that the git CORS proxy ' +
+                        '(SYNC_GIT_CORS_PROXY) is reachable.',
+                    { cause: error }
+                );
+            }
+
             // Cloning an empty remote repo (no commits yet) fails. Initialize a
             // local repo and wire the remote so the first push creates the branch.
             await git.init({ fs: fsImpl, dir, defaultBranch: options.branch });
+            // `force` keeps origin pointed at the current credentials: the URL
+            // embeds them, so a rotated app password changes the URL and a
+            // non-forced addRemote would reject it as an existing remote.
             await git.addRemote({
                 fs: fsImpl,
                 dir,
                 remote: 'origin',
                 url: options.gitUrl,
+                force: true,
             });
         }
     };
@@ -206,7 +259,22 @@ export const createGitWriter = (
         });
 
         if (!result.ok) {
-            throw new Error('Failed to push to Bitbucket: rejected by remote.');
+            // `result.error` carries the remote's "unpack" failure and
+            // `result.refs[ref].error` the per-ref reason (non-fast-forward, a
+            // declined pre-receive hook, branch permissions). Reporting the
+            // generic message instead hides the only useful detail.
+            const refError = Object.entries(result.refs ?? {})
+                .filter(([, status]) => !status.ok)
+                .map(
+                    ([ref, status]) =>
+                        `${ref}: ${status.error ?? 'rejected by remote'}`
+                )
+                .join('; ');
+            const detail =
+                [result.error, refError].filter(Boolean).join(' ') ||
+                'rejected by remote';
+
+            throw new Error(`Failed to push to Bitbucket: ${detail}`);
         }
 
         return oid;
@@ -220,12 +288,25 @@ export const createGitWriter = (
 
             try {
                 return await commitAndPush(message);
-            } catch {
+            } catch (firstError) {
                 // Likely a non-fast-forward push (another editor pushed while we
                 // were writing). Re-sync to the latest remote and retry once.
                 await fetchLatest();
                 await writeFile(content);
-                return await commitAndPush(message);
+                try {
+                    return await commitAndPush(message);
+                } catch (retryError) {
+                    // Report both attempts: when the retry fails for a different
+                    // reason than the first, the original cause is the useful one.
+                    const first = describeError(firstError);
+                    const second = describeError(retryError);
+                    throw new Error(
+                        first === second
+                            ? second
+                            : `${second} (first attempt: ${first})`,
+                        { cause: retryError }
+                    );
+                }
             }
         },
     };
