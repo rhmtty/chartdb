@@ -14,6 +14,29 @@ const GIT_PROXY_PREFIX = '/git/';
  * isomorphic-git routes every request through its `corsProxy` (same-origin
  * `/git/<host>/...`), and this middleware relays them server-side.
  */
+/**
+ * Headers that must never be forwarded to the upstream. Hop-by-hop headers are
+ * specific to the single transport-link, and browser-injected headers like
+ * `origin` / `referer` can confuse Bitbucket into treating a server-side relay
+ * as a cross-origin request.
+ */
+const STRIPPED_HEADERS = new Set([
+    'connection',
+    'keep-alive',
+    'transfer-encoding',
+    'te',
+    'trailer',
+    'upgrade',
+    'origin',
+    'referer',
+    'sec-fetch-dest',
+    'sec-fetch-mode',
+    'sec-fetch-site',
+    'sec-ch-ua',
+    'sec-ch-ua-mobile',
+    'sec-ch-ua-platform',
+]);
+
 const gitProxyPlugin = (): Plugin => ({
     name: 'chartdb-git-proxy',
     configureServer(server) {
@@ -36,14 +59,27 @@ const gitProxyPlugin = (): Plugin => ({
 
                 const host = trimmed.slice(0, slashIndex);
                 const pathAndQuery = trimmed.slice(slashIndex);
-                const headers = { ...req.headers, host };
+
+                // Build a clean header set: strip hop-by-hop and browser-only
+                // headers that can break the upstream connection or trigger
+                // cross-origin rejections.
+                const upstreamHeaders: Record<string, string | string[]> = {};
+                for (const [name, value] of Object.entries(req.headers)) {
+                    if (
+                        value !== undefined &&
+                        !STRIPPED_HEADERS.has(name.toLowerCase())
+                    ) {
+                        upstreamHeaders[name] = value;
+                    }
+                }
+                upstreamHeaders['host'] = host;
 
                 const proxyReq = httpsRequest(
                     {
-                        host,
+                        hostname: host,
                         path: pathAndQuery,
                         method: req.method,
-                        headers,
+                        headers: upstreamHeaders,
                     },
                     (proxyRes) => {
                         res.statusCode = proxyRes.statusCode ?? 502;
